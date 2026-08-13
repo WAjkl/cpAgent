@@ -16,6 +16,7 @@ HANDOFF.md
 cpAgent 评估报告.md
 Agent 长上下文机制详解与 cpAgent 优化启示.md
 会话记忆机制详解与 cpAgent 记忆优化启示.md
+issues/
 
 # 抓取原始数据（非核心，由 scripts/build_hardware_db.py 生成 data/hardware_db.json）
 _cpu_prices_raw.json
