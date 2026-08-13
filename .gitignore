@@ -1,0 +1,22 @@
+# 环境与密钥
+.env
+# Python
+__pycache__/
+*.pyc
+# 数据运行时产物
+data/*.db
+data/*.db-*
+# 前端
+frontend/node_modules/
+frontend/out/
+frontend/dist/
+
+# 内部工作文档（不公开）
+HANDOFF.md
+cpAgent 评估报告.md
+Agent 长上下文机制详解与 cpAgent 优化启示.md
+会话记忆机制详解与 cpAgent 记忆优化启示.md
+
+# 抓取原始数据（非核心，由 scripts/build_hardware_db.py 生成 data/hardware_db.json）
+_cpu_prices_raw.json
+_gpu_prices_raw.json
