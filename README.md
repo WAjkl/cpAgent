@@ -8,6 +8,14 @@ cpAgent 是桌面装机顾问 Agent：说一句「8000 打游戏 2K 不要显示
 
 技术栈：Electron + React 18 + TypeScript + Tailwind + Zustand，后端 FastAPI + ReAct 循环 + SQLite。
 
+## 界面截图
+
+<div align="center">
+  <img src="docs/screenshots/screenshot-1.png" alt="对话截图 1" width="720" />
+  <img src="docs/screenshots/screenshot-2.png" alt="对话截图 2" width="720" />
+  <img src="docs/screenshots/screenshot-3.png" alt="对话截图 3" width="720" />
+</div>
+
 ## 快速开始
 
 ```bash
