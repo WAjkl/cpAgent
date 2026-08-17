@@ -143,7 +143,14 @@ class PriceCache:
 
     # ---------- 预热 ----------
     def seed_from_hardware_db(self) -> int:
-        """从 data/hardware_db.json 全量预热缓存（source/confidence 照搬）。"""
+        """从 data/hardware_db.json 全量预热缓存。
+
+        关键诚实约定：hardware_db.json 是**静态快照**（2026-08-13），其中的
+        price_source 字段一律视为 estimate（快照估算），不得照搬成 "live"。
+        真正标记为 "live" 的，只能是运行时经适配器真实抓取到的价格
+        （当前仅 GPU 走 videocardprices.com）。否则会把下面的静态价伪装成
+        "实时"，正是需要避免的假实时问题。
+        """
         with open(HARDWARE_DB_PATH, encoding="utf-8") as f:
             db = json.load(f)
         n = 0
@@ -154,14 +161,15 @@ class PriceCache:
                 price = _parse_price(it.get("price_cny"))
                 if price is None:
                     continue
-                # fetched_at：统一用快照日期（2026-08-13 00:00 本地）
+                # fetched_at：统一用快照日期（2026-08-13 00:00 本地）；
+                # source 强制 estimate（静态快照，非实时抓取）。
                 self.upsert(
                     model=it["model"],
                     category=cat,
                     price=price,
                     low=_parse_price(it.get("price_low")),
                     high=_parse_price(it.get("price_high")),
-                    source=it.get("price_source", "estimate"),
+                    source="estimate",
                     confidence=float(it.get("confidence", 0.5)),
                     fetched_at=_snapshot_epoch(it.get("fetched_at")),
                 )

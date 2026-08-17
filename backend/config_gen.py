@@ -179,9 +179,21 @@ def generate_config(
                             for _k, _it in (("cpu", cpu), ("gpu", gpu), ("memory", mem),
                                            ("ssd", ssd), ("psu", psu), ("motherboard", mb)):
                                 _it2 = dict(_it)
-                                if _it2.get("model") in live_map:
-                                    _it2["price_cny"] = live_map[_it2["model"]]
+                                _model = _it2.get("model")
+                                # 价格来源必须以「缓存」为准（缓存才是真实价格层）：
+                                # - 命中 live_map（经适配器真实抓取）→ live
+                                # - 否则取缓存记录 source（快照预热为 estimate）
+                                # 绝不能照搬硬件库 JSON 里的 price_source 字段，
+                                # 否则静态快照价会被伪装成 live（假实时）。
+                                _rec = cache.get(_model) if cache else None
+                                if _model in live_map:
+                                    _it2["price_cny"] = live_map[_model]
                                     _it2["price_source"] = "live"
+                                elif _rec is not None:
+                                    _it2["price_cny"] = _rec.get("price_cny", _it2.get("price_cny"))
+                                    _it2["price_source"] = _rec.get("source", "estimate")
+                                else:
+                                    _it2["price_source"] = "estimate"
                                 parts[_k] = _it2
                             total = sum(_parse_price(p.get("price_cny")) or 0 for p in parts.values())
                             if total > budget:
