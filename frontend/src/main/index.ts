@@ -1,8 +1,8 @@
 import { app, shell, BrowserWindow, ipcMain, net } from 'electron'
 import { join } from 'path'
 
-// 后端服务地址（M2 FastAPI）
-const BACKEND_URL = process.env.CPAGENT_BACKEND_URL || 'http://127.0.0.1:8765'
+// 后端服务地址（M2 FastAPI）；默认 8766（8765 被本机 IDE 面板进程常驻占用）
+const BACKEND_URL = process.env.CPAGENT_BACKEND_URL || 'http://127.0.0.1:8766'
 
 function createWindow(): void {
   const win = new BrowserWindow({

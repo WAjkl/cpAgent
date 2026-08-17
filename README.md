@@ -18,8 +18,13 @@ cpAgent 是桌面装机顾问 Agent：说一句「8000 打游戏 2K 不要显示
 
 ## 快速开始
 
+> 端口说明：后端默认监听 **8766**（`CPAGENT_PORT` 可覆盖）。原 8765 被本机
+> IDE 面板进程常驻占用（`node serve-panel.js`），绑定会失败（Errno 10048）。
+> 前端默认已指向 8766；如需自定义端口，启动后端时设置 `CPAGENT_PORT`，
+> 并同步设置前端环境变量 `CPAGENT_BACKEND_URL`。
+
 ```bash
-# 后端（127.0.0.1:8765）
+# 后端（默认 127.0.0.1:8766；指定端口：CPAGENT_PORT=9000 python -m backend.server）
 python -m backend.server
 
 # 前端

@@ -270,9 +270,13 @@ def conversation_configs(session_id: str) -> Dict[str, Any]:
 
 
 def main() -> None:
+    import os
     import uvicorn
 
-    uvicorn.run("backend.server:app", host="127.0.0.1", port=8765, reload=False)
+    # 端口可配（CPAGENT_PORT），默认 8766：本机 IDE 面板进程常驻占用 8765，
+    # 若坚持默认端口会 bind 失败（Errno 10048），前端连不上后端。
+    port = int(os.getenv("CPAGENT_PORT", "8766"))
+    uvicorn.run("backend.server:app", host="127.0.0.1", port=port, reload=False)
 
 
 if __name__ == "__main__":

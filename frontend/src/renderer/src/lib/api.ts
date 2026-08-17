@@ -1,7 +1,9 @@
 import type { Config, UseCase, Resolution, Prefs } from '../types'
 import { MOCK_CONFIGS, MOCK_REPLY } from './mock'
 
-const BACKEND = 'http://127.0.0.1:8765'
+// 默认后端地址 8766：本机 IDE 面板进程常驻占用 8765（启动后端请用默认端口，
+// 或 CPAGENT_PORT 指定后同步修改这里；前端 main 进程支持 CPAGENT_BACKEND_URL 覆盖）
+const BACKEND = 'http://127.0.0.1:8766'
 
 // SSE 事件类型（对齐后端 server.py）
 export type ChatEvent =
