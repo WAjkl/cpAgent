@@ -73,7 +73,8 @@ def test_browser_price():
     check("白名单拦截 file://", not is_allowed_url("file:///etc/passwd"))
     c = PriceCache(db_path=_tmp_db("bp"))
     q = search_price("RTX 5090", "gpu", cache=c)
-    check("search_price 返回价格", q["price_cny"] == 31074.0, str(q.get("price_cny")))
+    check("search_price 返回价格", q["price_cny"] and q["price_cny"] > 0
+          and q.get("source") in ("live", "estimate"), str(q.get("price_cny")))
     q2 = search_price("不存在的型号", "gpu", cache=c)
     check("未知型号返回 unknown", q2["level"] == "unknown")
     c._conn.close()
@@ -119,9 +120,14 @@ def test_sanitize():
 def test_tool_registry():
     print("[6] tool_registry")
     r = ToolRegistry.default()
-    check("5 个工具", len(r.list()) == 5, str(r.list()))
+    EXPECTED_TOOLS = {
+        "query_hardware_db", "get_hardware_summary", "search_price",
+        "generate_config", "get_price_summary", "web_search", "web_fetch",
+    }
+    check("工具注册完整", set(r.list()) == EXPECTED_TOOLS, str(r.list()))
     q = r.invoke("search_price", {"model": "RTX 5090", "category": "gpu"})
-    check("search_price 调用", q["price_cny"] == 31074.0)
+    check("search_price 返回有效价", q.get("price_cny") and q["price_cny"] > 0
+          and q.get("source") in ("live", "estimate"), str(q))
     cfg = r.invoke("generate_config", {"budget": 8000, "use_case": "gaming", "resolution": "2K"})
     check("generate_config 调用", cfg["config"]["total_price"] <= 8000)
 

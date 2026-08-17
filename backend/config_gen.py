@@ -129,6 +129,11 @@ def generate_config(
     cache = cache or PriceCache()
     if cache.count() == 0:
         cache.seed_from_hardware_db()
+    # 若 price_cache 中有 live 记录（refresh_live.py 刷新），用实时价覆盖快照价
+    live_map: Dict[str, float] = {}
+    for _r in cache.all():
+        if _r.get("source") == "live":
+            live_map[_r["model"]] = _r["price_cny"]
     use_case = use_case if use_case in ("gaming", "productivity", "balanced") else "gaming"
 
     # ---------- 1. 分层候选 ----------
@@ -170,10 +175,14 @@ def generate_config(
                 for mem in mems:
                     for ssd in ssds:
                         for psu in psus_ok:
-                            parts = {
-                                "cpu": cpu, "gpu": gpu, "memory": mem,
-                                "ssd": ssd, "psu": psu, "motherboard": mb,
-                            }
+                            parts = {}
+                            for _k, _it in (("cpu", cpu), ("gpu", gpu), ("memory", mem),
+                                           ("ssd", ssd), ("psu", psu), ("motherboard", mb)):
+                                _it2 = dict(_it)
+                                if _it2.get("model") in live_map:
+                                    _it2["price_cny"] = live_map[_it2["model"]]
+                                    _it2["price_source"] = "live"
+                                parts[_k] = _it2
                             total = sum(_parse_price(p.get("price_cny")) or 0 for p in parts.values())
                             if total > budget:
                                 continue

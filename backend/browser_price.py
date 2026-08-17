@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from .config import HARDWARE_DB_PATH
 from .price_cache import PriceCache, _parse_price, _snapshot_epoch
+from .vcp_live_price import VideocardpricesAdapter  # 真实抓取（替代原 v0 骨架）
 
 # ---------- 入口白名单（SSRF 防护）----------
 ALLOWED_DOMAINS = {
@@ -119,21 +120,8 @@ class HardwareDbAdapter(PriceAdapter):
         return None
 
 
-class VideocardpricesAdapter(HttpAdapter):
-    """videocardprices.com 适配器（参考实现）。
-
-    真实按型号搜价需解析站点搜索页/商品 JSON-LD，受反爬影响；
-    v0 默认不启用网络抓取（fetch 返回 None），由 HardwareDbAdapter 兜底。
-    接入真实抓取后，把 fetch 实现为站点搜索 + JSON-LD 解析即可。
-    """
-
-    name = "videocardprices"
-    domains = ["videocardprices.com"]
-    categories = ["gpu"]
-
-    def fetch(self, model: str, category: str) -> Optional[Dict[str, Any]]:
-        # v0：未接入真实抓取（反爬挂账），返回 None 走降级
-        return None
+# VideocardpricesAdapter 已由 vcp_live_price 模块提供（真实抓取 + 解析 +
+# 实时汇率，fail-safe 降级到 hardware_db）。详见 backend/vcp_live_price.py。
 
 
 # ---------- 适配器注册 ----------
