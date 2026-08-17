@@ -22,12 +22,14 @@ from typing import Any, Dict, List, Optional
 from .config import HARDWARE_DB_PATH
 from .price_cache import PriceCache, _parse_price, _snapshot_epoch
 from .vcp_live_price import VideocardpricesAdapter  # 真实抓取（替代原 v0 骨架）
+from .techpartprices import TechPartPricesAdapter  # 公开 JSON API（Amazon UK 实时价，补 CPU/内存/SSD/主板）
 
 # ---------- 入口白名单（SSRF 防护）----------
 ALLOWED_DOMAINS = {
     "videocardprices.com",   # GPU 街价（M0 已抓，JSON-LD）
+    "techpartprices.com",    # 全品类公开 JSON API（Amazon UK 实时价）
     "passmark.com",          # CPU 实测美元价（M0 已抓）
-    "open.er-api.com",       # USD/CNY 汇率
+    "open.er-api.com",       # USD/GBP → CNY 汇率
     # 待接入（M2 挂账）：item.jd.com / manmanbuy.com 等，反爬登录墙
 }
 
@@ -113,7 +115,9 @@ class HardwareDbAdapter(PriceAdapter):
                     "price_cny": price,
                     "price_low": _parse_price(it.get("price_low")),
                     "price_high": _parse_price(it.get("price_high")),
-                    "source": it.get("price_source", "estimate"),
+                    # 兜底快照一律 estimate：绝不继承 hardware_db.json 里的
+                    # price_source 字段（否则静态价会被标成 live，假实时）。
+                    "source": "estimate",
                     "confidence": float(it.get("confidence", 0.5)),
                     "fetched_at": _snapshot_epoch(it.get("fetched_at")),
                 }
@@ -127,8 +131,9 @@ class HardwareDbAdapter(PriceAdapter):
 # ---------- 适配器注册 ----------
 def _ensure_adapters() -> List[PriceAdapter]:
     if not _ADAPTERS:
-        # 注册顺序即优先级：先真实站点，后内置兜底
-        for a in (VideocardpricesAdapter(), HardwareDbAdapter()):
+        # 注册顺序即优先级：GPU 默认 videocardprices（注册在前），
+        # CPU/内存/SSD/主板 由 techpartprices 提供实时价；hardware_db 兜底。
+        for a in (VideocardpricesAdapter(), TechPartPricesAdapter(), HardwareDbAdapter()):
             register_adapter(a)
     return list(_ADAPTERS.values())
 

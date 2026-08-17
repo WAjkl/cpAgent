@@ -150,6 +150,9 @@ class PriceCache:
         真正标记为 "live" 的，只能是运行时经适配器真实抓取到的价格
         （当前仅 GPU 走 videocardprices.com）。否则会把下面的静态价伪装成
         "实时"，正是需要避免的假实时问题。
+
+        只补缺失记录（INSERT-IF-MISSING）：seed 不覆盖已有记录，否则每次
+        进程重启都会把 refresh 刷出的 live 价清回 estimate。
         """
         with open(HARDWARE_DB_PATH, encoding="utf-8") as f:
             db = json.load(f)
@@ -163,17 +166,18 @@ class PriceCache:
                     continue
                 # fetched_at：统一用快照日期（2026-08-13 00:00 本地）；
                 # source 强制 estimate（静态快照，非实时抓取）。
-                self.upsert(
-                    model=it["model"],
-                    category=cat,
-                    price=price,
-                    low=_parse_price(it.get("price_low")),
-                    high=_parse_price(it.get("price_high")),
-                    source="estimate",
-                    confidence=float(it.get("confidence", 0.5)),
-                    fetched_at=_snapshot_epoch(it.get("fetched_at")),
-                )
-                n += 1
+                if self.get(it["model"]) is None:  # 只补缺失，保留已有 live/新记录
+                    self.upsert(
+                        model=it["model"],
+                        category=cat,
+                        price=price,
+                        low=_parse_price(it.get("price_low")),
+                        high=_parse_price(it.get("price_high")),
+                        source="estimate",
+                        confidence=float(it.get("confidence", 0.5)),
+                        fetched_at=_snapshot_epoch(it.get("fetched_at")),
+                    )
+                    n += 1
         return n
 
     def _row_to_dict(self, row) -> Dict[str, Any]:
