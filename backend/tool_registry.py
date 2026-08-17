@@ -101,6 +101,7 @@ class ToolRegistry:
         # ---------- M2 工具 ----------
         from .browser_price import price_summary, search_price
         from .config_gen import generate_config as _generate_config
+        from .price_refresh import refresh_all
 
         reg.register(Tool(
             name="search_price",
@@ -142,6 +143,17 @@ class ToolRegistry:
             name="get_price_summary",
             description="获取价格缓存整体状态（总数 + fresh/stale/expired 分布），用于向用户说明价格新鲜度。",
             fn=price_summary,
+            schema={"type": "object", "properties": {}, "required": []},
+        ))
+
+        reg.register(Tool(
+            name="refresh_prices",
+            description=(
+                "联网刷新全部部件实时价进缓存（GPU/CPU/内存/SSD/主板；PSU 无实时源保持快照）。"
+                "生成配置前若价格多为估算（estimate），调用本工具刷新后用 live 实时价。"
+                "低频：1 小时内重复调用会返回 skipped。"
+            ),
+            fn=refresh_all,
             schema={"type": "object", "properties": {}, "required": []},
         ))
 

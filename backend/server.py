@@ -33,6 +33,7 @@ from .evidence import EvidenceStore
 from .llm import resolve_provider
 from .longterm_memory import LongTermMemory
 from .price_cache import PriceCache
+from .price_refresh import refresh_all, warmup_if_needed
 from .tools.hardware_db import get_hardware_summary
 
 app = FastAPI(title="cpAgent 装机顾问", version="0.2.0")
@@ -52,6 +53,10 @@ _price_cache = PriceCache()
 _longterm = LongTermMemory()
 _evidence = EvidenceStore()
 _agent: Optional[AgentLoop] = None
+
+# 生成配置前的实时价预热开关：仅真实启动（main()）时启用；
+# 测试/导入路径（TestClient 直接 import app）默认关闭，避免触发联网刷新。
+_WARMUP_ENABLED = False
 
 
 def get_agent() -> AgentLoop:
@@ -178,6 +183,9 @@ def hardware_summary() -> Dict[str, Any]:
 @app.post("/config")
 def make_config(req: ConfigRequest) -> Dict[str, Any]:
     """直接生成配置单（确定性算法，不依赖 LLM）。"""
+    # 首次生成前预热实时价：live 覆盖不足则全品类刷新（低频，1h 内不重复）
+    if _WARMUP_ENABLED:
+        warmup_if_needed(_price_cache)
     cfgs = generate_config(req.budget, req.use_case, req.resolution, top_k=req.top_k, cache=_price_cache)
     if not cfgs:
         raise HTTPException(status_code=422, detail="该预算/用途下无可行配置（预算过低或条件过严）")
@@ -271,7 +279,16 @@ def conversation_configs(session_id: str) -> Dict[str, Any]:
 
 def main() -> None:
     import os
+    import threading
     import uvicorn
+
+    global _WARMUP_ENABLED
+    _WARMUP_ENABLED = True  # 真实启动才启用 /config 预热
+
+    # 启动即后台自动刷新全品类实时价（默认开；CPAGENT_NO_AUTOREFRESH=1 关闭）。
+    # 让配置生成"开箱即实时"，无需手动先跑 refresh_live.py。
+    if os.getenv("CPAGENT_NO_AUTOREFRESH", "").lower() not in ("1", "true", "yes"):
+        threading.Thread(target=refresh_all, kwargs={"cache": _price_cache}, daemon=True).start()
 
     # 端口可配（CPAGENT_PORT），默认 8766：本机 IDE 面板进程常驻占用 8765，
     # 若坚持默认端口会 bind 失败（Errno 10048），前端连不上后端。

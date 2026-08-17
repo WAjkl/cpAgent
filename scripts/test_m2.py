@@ -122,7 +122,8 @@ def test_tool_registry():
     r = ToolRegistry.default()
     EXPECTED_TOOLS = {
         "query_hardware_db", "get_hardware_summary", "search_price",
-        "generate_config", "get_price_summary", "web_search", "web_fetch",
+        "generate_config", "get_price_summary", "refresh_prices",
+        "web_search", "web_fetch",
     }
     check("工具注册完整", set(r.list()) == EXPECTED_TOOLS, str(r.list()))
     q = r.invoke("search_price", {"model": "RTX 5090", "category": "gpu"})
