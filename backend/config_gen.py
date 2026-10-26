@@ -113,6 +113,30 @@ def _part_out(item: Dict[str, Any], cache: Optional[PriceCache] = None) -> Dict[
     return out
 
 
+USE_CASE_ALIASES = {
+    "gaming": ("gaming", "game", "游戏", "打游戏", "玩游戏", "网游", "电竞", "3a", "3A"),
+    "productivity": ("productivity", "生产力", "剪辑", "视频剪辑", "剪视频", "渲染", "建模",
+                     "设计", "办公", "编程", "写代码", "pr", "ae", "达芬奇"),
+    "balanced": ("balanced", "均衡", "综合", "通用", "家用", "一般"),
+}
+
+
+def _normalize_use_case(raw: str) -> Tuple[str, Optional[str]]:
+    """把用户写的用途归一到三档。
+
+    以前这里是 `use_case if use_case in (...) else "gaming"` —— 传"视频剪辑"
+    会**静默**按游戏算，用户拿到一张游戏卡配置还以为系统听懂了。
+    现在先查同义词表，实在认不出来才退回 gaming，并且把这件事写进 warnings，
+    让调用方能看见"我没听懂，是按默认算的"。
+    """
+    key = (raw or "").strip()
+    low = key.lower()
+    for canon, words in USE_CASE_ALIASES.items():
+        if low in [w.lower() for w in words]:
+            return canon, None
+    return "gaming", f"用途「{key}」未识别，已按 gaming（游戏）计算；支持：gaming / productivity / balanced"
+
+
 def generate_config(
     budget: float,
     use_case: str = "gaming",
@@ -134,7 +158,7 @@ def generate_config(
     for _r in cache.all():
         if _r.get("source") == "live":
             live_map[_r["model"]] = _r["price_cny"]
-    use_case = use_case if use_case in ("gaming", "productivity", "balanced") else "gaming"
+    use_case, case_note = _normalize_use_case(use_case)
 
     # ---------- 1. 分层候选 ----------
     # 显卡预算上限放宽到 65%：高预算（如 5 万）时旗舰卡占比可超 50%，否则锁死在 RTX 4090 一档
@@ -145,7 +169,15 @@ def generate_config(
     gpus.sort(key=lambda g: -_gpu_perf(g))
     gpus = gpus[:GPU_TOP]
 
-    cpus = sorted(db.get("cpu", []), key=lambda c: -(_cpu_gaming(c) if use_case == "gaming" else _cpu_prod(c)))
+    # CPU 也要过预算筛。以前这里是「按性能排序取前 N」，没有价格上限——
+    # 结果生产力用途排在前面的全是 16 核旗舰，8000 预算下组一组超一组，直接无解。
+    # 现在先按预算切一刀，再在能买得起的范围里挑性能最好的。
+    cpu_budget = budget * 0.35
+    cpus_fit = [c for c in db.get("cpu", []) if _parse_price(c.get("price_cny")) <= cpu_budget]
+    if not cpus_fit:
+        # 预算极低时不要直接判死，退回最便宜的几颗，让上层给"预算不够"的结论而不是"无解"
+        cpus_fit = sorted(db.get("cpu", []), key=lambda c: _parse_price(c.get("price_cny")))[:CPU_TOP]
+    cpus = sorted(cpus_fit, key=lambda c: -(_cpu_gaming(c) if use_case == "gaming" else _cpu_prod(c)))
     cpus = cpus[:CPU_TOP]
 
     mb_by_socket: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -156,7 +188,19 @@ def generate_config(
     for mem in db.get("memory", []):
         mem_by_gen[_memory_gen(mem)].append(mem)
 
-    ssds = sorted(db.get("ssd", []), key=lambda s: -float(s.get("capacity_gb") or 0))[:SSD_TOP]
+    # 同理：SSD 以前按容量从大到小取，等于永远往最贵的选。改成容量分档各取一个，
+    # 保证候选里同时有 500G / 1T / 2T，预算紧的时候有得退。
+    ssd_budget = budget * 0.15
+    ssd_fit = [s for s in db.get("ssd", []) if _parse_price(s.get("price_cny")) <= ssd_budget]
+    if not ssd_fit:
+        ssd_fit = sorted(db.get("ssd", []), key=lambda s: _parse_price(s.get("price_cny")))[:SSD_TOP]
+    by_cap: Dict[float, List[Dict[str, Any]]] = defaultdict(list)
+    for s in ssd_fit:
+        by_cap[float(s.get("capacity_gb") or 0)].append(s)
+    ssds: List[Dict[str, Any]] = []
+    for cap in sorted(by_cap, reverse=True):
+        ssds.extend(sorted(by_cap[cap], key=lambda s: _parse_price(s.get("price_cny")))[:1])
+    ssds = ssds[:SSD_TOP]
     psus = sorted(db.get("psu", []), key=lambda p: _parse_price(p.get("price_cny")) or 0)
 
     # ---------- 2. 约束穷举 ----------
@@ -226,6 +270,8 @@ def generate_config(
         )
         levels = defaultdict(int)
         warnings: List[str] = []
+        if case_note:
+            warnings.append(case_note)
         for p in parts.values():
             levels[p.get("level", "unknown")] += 1
             if p.get("price_source") == "estimate":

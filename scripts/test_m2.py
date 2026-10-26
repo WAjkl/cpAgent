@@ -92,8 +92,62 @@ def test_config_gen():
         check("六大件齐全", all(k in c0["parts"] for k in ("cpu", "gpu", "memory", "ssd", "psu", "motherboard")))
     cfgs2 = generate_config(8000, use_case="productivity", top_k=2, cache=c)
     check("生产力有解且分更高", len(cfgs2) >= 1 and cfgs2[0]["score"]["productivity"] > cfgs2[0]["score"]["gaming"])
+
+    # 回归：以前候选池只按性能排序、不过预算，生产力在 8000 下会组一组超一组直接无解
+    if cfgs2:
+        cpu_price = float(cfgs2[0]["parts"]["cpu"]["price"])
+        check("8000 生产力的 CPU 不超过预算 35%", cpu_price <= 8000 * 0.35 + 1, f"实际 {cpu_price}")
+        check("8000 生产力总价≤预算", cfgs2[0]["total_price"] <= 8000, str(cfgs2[0]["total_price"]))
     check("1000元诚实返回空", len(generate_config(1000, use_case="gaming", cache=c)) == 0)
     c._conn.close()
+
+
+def test_use_case_normalize():
+    print("[3.5] use_case 归一化")
+    c = PriceCache(db_path=_tmp_db("uc"))
+    # 同义词要认
+    for raw, want in (("游戏", "gaming"), ("打游戏", "gaming"),
+                      ("视频剪辑", "productivity"), ("剪视频", "productivity"),
+                      ("渲染", "productivity"), ("均衡", "balanced"), ("家用", "balanced")):
+        out = generate_config(12000, use_case=raw, cache=c)
+        got = out[0]["use_case"] if out else "(无解)"
+        check(f"「{raw}」→ {want}", got == want, f"实际 {got}")
+
+    # 认不出来时不能静默：必须留在 warnings 里
+    out = generate_config(12000, use_case="想吃火锅", cache=c)
+    notes = [w for w in (out[0]["warnings"] if out else []) if "未识别" in w]
+    check("未知用途带「未识别」警告", bool(notes), str(out[0]["warnings"] if out else "无解"))
+    check("未知用途退回 gaming", bool(out) and out[0]["use_case"] == "gaming")
+    c._conn.close()
+
+
+def test_mcp_server():
+    print("[6.5] mcp_server")
+    from backend import mcp_server as ms
+
+    names = {n for n in ("generate_pc_config", "check_budget", "list_hardware")
+             if callable(getattr(ms, n, None))}
+    check("三个工具都在", names == {"generate_pc_config", "check_budget", "list_hardware"}, str(names))
+    check("工具已注册到 MCPServer", len(ms.mcp._tool_manager.list_tools()) >= 3
+          if hasattr(ms.mcp, "_tool_manager") else True)
+
+    raw = ms.generate_pc_config(8000, "gaming", "2K", 1)
+    d = json.loads(raw)
+    check("MCP generate_pc_config 返回 ok", d.get("ok") is True)
+    if d.get("ok"):
+        c0 = d["configs"][0]
+        check("MCP 结果含来源字段", all(p.get("source") for p in c0["parts"]), str(c0["parts"][:1]))
+        check("MCP 结果总价≤预算", float(c0["total_price"]) <= 8000, str(c0["total_price"]))
+
+    low = json.loads(ms.generate_pc_config(2000, "gaming", "4K", 1))
+    check("MCP 无解时 ok=False 且带 hint", low.get("ok") is False and "hint" in low)
+
+    b = json.loads(ms.check_budget(5000))
+    check("check_budget 预算不足 feasible=False", b.get("feasible") is False)
+
+    hw = json.loads(ms.list_hardware("gpu", 3))
+    check("list_hardware 返回 3 条", hw.get("ok") and len(hw["items"]) == 3, str(hw)[:120])
+    check("list_hardware 未知品类给 available", json.loads(ms.list_hardware("xxx", 1))["ok"] is False)
 
 
 def test_longterm_memory():
@@ -157,9 +211,11 @@ def main():
     test_price_cache()
     test_browser_price()
     test_config_gen()
+    test_use_case_normalize()
     test_longterm_memory()
     test_sanitize()
     test_tool_registry()
+    test_mcp_server()
     test_server()
     for p in _tmpfiles:
         try:
