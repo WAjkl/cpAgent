@@ -36,6 +36,7 @@ HARDWARE_DB_PATH = DATA_DIR / "hardware_db.json"
 EVIDENCE_DB_PATH = DATA_DIR / "evidence.db"      # 证据锚定 SQLite（工具原始返回落盘）
 PRICE_CACHE_PATH = DATA_DIR / "price_cache.db"   # 价格缓存（M2 启用）
 LONGTERM_MEMORY_PATH = DATA_DIR / "longterm_memory.db"  # 长期记忆（M2 启用）
+AUDIT_DB_PATH = DATA_DIR / "audit.db"          # 审计与成本归因（企业级：成本账 + 责任账）
 
 
 @dataclass

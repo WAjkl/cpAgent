@@ -19,11 +19,28 @@ from typing import Any, Callable, Dict, List, Optional
 
 
 class Tool:
-    def __init__(self, name: str, description: str, fn: Callable, schema: Optional[Dict[str, Any]] = None):
+    # 风险分级：决定这个工具能不能被 Agent 自主执行。
+    #   read              —— 只读，怎么跑都改不了事实（查库、搜价、抓网页）
+    #   write_reversible  —— 有副作用但可撤销/可重做（生成配置单、写缓存）
+    #   write_irreversible—— 不可撤销、涉及钱或对外承诺（下单、支付、发送）
+    # 企业落地时最怕的就是第三类被 Agent 自主触发：Demo 里"能自动完成"是卖点，
+    # 生产环境里"自动完成了不该做的动作"是事故。所以这一层必须是硬约束，不能靠提示词。
+    RISK_READ = "read"
+    RISK_REVERSIBLE = "write_reversible"
+    RISK_IRREVERSIBLE = "write_irreversible"
+
+    def __init__(self, name: str, description: str, fn: Callable,
+                 schema: Optional[Dict[str, Any]] = None,
+                 risk_level: str = "read"):
         self.name = name
         self.description = description
         self.fn = fn
         self.schema = schema or {"type": "object", "properties": {}, "required": []}
+        self.risk_level = risk_level
+
+    @property
+    def needs_approval(self) -> bool:
+        return self.risk_level == self.RISK_IRREVERSIBLE
 
     def invoke(self, arguments: Dict[str, Any]) -> Any:
         """调用工具；参数必须是 dict。返回结果（可 JSON 序列化）。"""
@@ -196,6 +213,21 @@ class ToolRegistry:
                 },
             ))
 
+        # 统一打风险等级：不改任何 register 调用，集中一处便于审计
+        _RISK = {
+            "query_hardware_db": Tool.RISK_READ,
+            "get_hardware_summary": Tool.RISK_READ,
+            "search_price": Tool.RISK_READ,
+            "get_price_summary": Tool.RISK_READ,
+            "web_search": Tool.RISK_READ,
+            "web_fetch": Tool.RISK_READ,
+            "generate_config": Tool.RISK_REVERSIBLE,
+            "refresh_prices": Tool.RISK_REVERSIBLE,   # 会写 price_cache，属可逆写
+        }
+        for _n, _lvl in _RISK.items():
+            _t = reg.get(_n)
+            if _t is not None:
+                _t.risk_level = _lvl
         return reg
 
 

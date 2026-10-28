@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,36 @@ from .config import LLMConfig
 
 class LLMError(RuntimeError):
     pass
+
+
+def _audit_call(provider: str, model: str, started: float,
+                prompt_tokens: int = 0, completion_tokens: int = 0,
+                ok: bool = True, error: str = "") -> None:
+    """把这次调用记进审计库（成本账）。
+
+    为什么放在 llm 层而不是业务层：只有这一层能同时拿到「模型、token 数、耗时」，
+    而这三样正是企业算成本账的最小单位。业务层再包一层就会漏掉重试和失败调用。
+    审计失败绝不影响主流程——记账不能成为业务的单点故障。
+    """
+    try:
+        from .audit import get_store
+        get_store().log_llm(provider, model, prompt_tokens, completion_tokens,
+                            int((time.time() - started) * 1000), ok, error)
+    except Exception:
+        pass
+
+
+def _usage_of(data: Dict[str, Any]) -> tuple:
+    """从各家响应里尽量扒出 token 用量。拿不到就返回 (0,0)，不猜。"""
+    u = data.get("usage") or {}
+    pt = u.get("prompt_tokens") or u.get("input_tokens") or 0
+    ct = u.get("completion_tokens") or u.get("output_tokens") or 0
+    # Ollama 用 prompt_eval_count / eval_count
+    if not pt:
+        pt = data.get("prompt_eval_count") or 0
+    if not ct:
+        ct = data.get("eval_count") or 0
+    return int(pt or 0), int(ct or 0)
 
 
 class LLMProvider:
@@ -67,18 +98,26 @@ class DeepSeekProvider(LLMProvider):
             },
             method="POST",
         )
+        t0 = time.time()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "ignore")[:300]
+            _audit_call(self.name, self.model, t0, ok=False, error=f"HTTP {e.code}: {body}")
             raise LLMError(f"DeepSeek HTTP {e.code}: {body}") from e
         except Exception as e:
+            _audit_call(self.name, self.model, t0, ok=False, error=str(e))
             raise LLMError(f"DeepSeek 请求失败: {e}") from e
         try:
-            return data["choices"][0]["message"]["content"]
+            content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as e:
+            _audit_call(self.name, self.model, t0, ok=False, error="响应结构异常")
             raise LLMError(f"DeepSeek 响应结构异常: {str(data)[:300]}") from e
+        # 成功也要记账：token 数在这里才有，业务层拿不到
+        pt, ct = _usage_of(data)
+        _audit_call(self.name, self.model, t0, pt, ct, ok=True)
+        return content
 
 
 class OllamaProvider(LLMProvider):
@@ -105,15 +144,22 @@ class OllamaProvider(LLMProvider):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        t0 = time.time()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except Exception as e:
+            _audit_call(self.name, self.model, t0, ok=False, error=str(e))
             raise LLMError(f"Ollama 请求失败: {e}") from e
         try:
-            return data["message"]["content"]
-        except KeyError as e:
-            raise LLMError(f"Ollama 响应结构异常: {str(data)[:300]}") from e
+            content = data["message"]["content"]
+        except (KeyError, TypeError):
+            _audit_call(self.name, self.model, t0, ok=False, error="响应结构异常")
+            raise
+        # 本地推理成本为 0，但 token 数照样记 —— 用于对比云端方案的实际节省
+        pt, ct = _usage_of(data)
+        _audit_call(self.name, self.model, t0, pt, ct, ok=True)
+        return content
 
 
 class MockProvider(LLMProvider):

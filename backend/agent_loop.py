@@ -70,6 +70,13 @@ class AgentLoop:
     def run(self, user_input: str, session_id: Optional[str] = None, turn_id: Optional[str] = None, prefs: Optional[Dict[str, Any]] = None, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         session_id = session_id or f"sess-{uuid.uuid4().hex[:8]}"
         turn_id = turn_id or f"turn-{uuid.uuid4().hex[:8]}"
+        # 绑定追踪上下文：这一轮里所有 LLM 调用和工具调用都会挂到同一个 trace_id 上，
+        # 之后才能回答「这一轮花了多少钱、为什么给这个结论」。必须在任何 LLM 调用之前。
+        try:
+            from .audit import set_trace
+            set_trace(session_id=session_id, turn_id=turn_id)
+        except Exception:
+            pass
         mem = WorkingMemory(session_id=session_id)
         mem.update_prefs(user_input)
         # 合并前端面板传入的偏好（用户明确选过，覆盖文本提取）
@@ -121,6 +128,33 @@ class AgentLoop:
                     messages.append({"role": "user", "content": f"工具 {tool_name} 不存在。注意：没有 final_answer 之类的结束工具——配件查完后直接输出 answer 结束。请从可用工具中选择，只输出 JSON。"})
                     continue
                 tool_args = self._apply_prefs_to_args(tool_name, tool_args, mem.prefs)
+
+                # 2.5) 风险闸（渐进式自主）
+                # 企业落地最难的不是让 Agent 能干活，是给它划边界：
+                #   只读       → 直接执行
+                #   可逆写     → 执行 + 事后通知（审计里留痕，人能回溯）
+                #   不可逆写   → 不执行，挂起等人工批准
+                # 这一层必须是代码里的硬约束。靠提示词说"请谨慎"在生产环境等于没做：
+                # 模型只要输出一次错误的 action，钱就花出去了，且不可回滚。
+                _risk = getattr(tool, "risk_level", "read")
+                try:
+                    from .audit import get_store as _audit_store
+                    if _risk == "write_irreversible":
+                        _audit_store().log_action(tool_name, _risk, "require_approval",
+                                                  tool_args, approved=None)
+                        messages.append({"role": "assistant", "content": json.dumps(decision, ensure_ascii=False)})
+                        messages.append({"role": "user", "content":
+                                         f"动作 {tool_name} 属于不可逆操作，已挂起等待人工批准，本次未执行。"
+                                         f"请先用已有信息给出回答，并告知用户需要确认这一步。"})
+                        trace.append({"step": step, "blocked_by_risk": tool_name, "risk_level": _risk})
+                        continue
+                    _audit_store().log_action(
+                        tool_name, _risk,
+                        "auto" if _risk == "read" else "notify",
+                        tool_args, approved=True)
+                except Exception:
+                    pass
+
                 try:
                     raw_result = tool.invoke(tool_args)
                 except Exception as e:

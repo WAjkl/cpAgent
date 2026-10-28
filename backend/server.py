@@ -180,6 +180,95 @@ def hardware_summary() -> Dict[str, Any]:
     return get_hardware_summary()
 
 
+# ---------------- 成本账 / 责任账（企业级审计） ----------------
+# 这三个接口对应企业最先问的三件事：花了多少、某个会话怎么花的、有没有动作等人批。
+# 设计上不依赖任何外部监控系统，SQLite 直接出数，但口径和生产一致。
+
+@app.get("/audit/overview")
+def audit_overview(hours: int = 24) -> Dict[str, Any]:
+    """近 N 小时总览：总花费、按模型分布、最烧钱的会话、成功率与延迟。"""
+    from .audit import get_store
+    try:
+        return get_store().overview(hours)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/audit/session/{session_id}")
+def audit_session(session_id: str) -> Dict[str, Any]:
+    """某个会话的账单：几次调用、多少 token、多少钱。"""
+    from .audit import get_store
+    try:
+        return get_store().cost_of_session(session_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/audit/trace/{trace_id}")
+def audit_trace(trace_id: str) -> Dict[str, Any]:
+    """某一轮的账单 + 该轮调用的模型明细（配合 evidence 表可还原完整链路）。"""
+    from .audit import get_store
+    try:
+        return get_store().cost_of_trace(trace_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/audit/approve/{action_id}")
+def audit_approve(action_id: str, approve: bool = True) -> Dict[str, Any]:
+    """人工批准/拒绝一个挂起的不可逆动作。
+
+    批准后**执行**该动作并回填结果——这是渐进式自主闭环的最后一环：
+    挂起（人不批就不动）→ 批准（人点头才动）→ 留痕（谁批的、什么时候）。
+    拒绝则只标记，不执行。
+    """
+    from .audit import get_store
+    store = get_store()
+    try:
+        row = store._conn.execute(
+            "SELECT action, args_digest FROM audit_action WHERE id=? AND approved IS NULL",
+            (action_id,)).fetchone()
+        if not row:
+            return {"ok": False, "error": "没有这个待批动作，或它已经被处理过"}
+        action, args_raw = row
+        try:
+            args = json.loads(args_raw or "{}")
+        except Exception:
+            args = {}
+
+        result = None
+        if approve:
+            from .tool_registry import ToolRegistry
+            reg = ToolRegistry.default(web_enabled=True)
+            tool = reg.get(action)
+            if tool is None:
+                return {"ok": False, "error": f"工具 {action} 已不存在，无法执行"}
+            try:
+                result = tool.invoke(args)
+                result = str(result)[:600]
+            except Exception as e:
+                return {"ok": False, "error": f"执行失败: {e}"}
+
+        store._conn.execute(
+            "UPDATE audit_action SET approved=?, approved_by=? WHERE id=?",
+            (1 if approve else 0, "human", action_id))
+        store._conn.commit()
+        return {"ok": True, "action": action, "approved": approve, "result": result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/audit/pending")
+def audit_pending() -> Dict[str, Any]:
+    """等待人工确认的高风险动作（渐进式自主里「必须人批」那一档）。"""
+    from .audit import get_store
+    try:
+        items = get_store().pending_approvals()
+        return {"count": len(items), "items": items}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/config")
 def make_config(req: ConfigRequest) -> Dict[str, Any]:
     """直接生成配置单（确定性算法，不依赖 LLM）。"""

@@ -21,3 +21,8 @@ issues/
 # 抓取原始数据（非核心，由 scripts/build_hardware_db.py 生成 data/hardware_db.json）
 _cpu_prices_raw.json
 _gpu_prices_raw.json
+
+# 数据备份与日志（运行时产物，不入库）
+data/*.backup-*.json
+data/*.log
+graphify-out/
