@@ -99,6 +99,27 @@ class AgentLoop:
                 routing=routing, trace=[],
             )
 
+        # 元问题（你是谁/你能做什么/怎么用）：直接答能力，不进 ReAct 循环。
+        # 必须在注入 prefs 之前短路——否则「你能做什么」会被记忆里的
+        # 预算/用途带去跑一轮推荐，用户问能力却收到一份配置单。
+        if routing["type"] == "meta":
+            return self._finalize(
+                session_id, turn_id, mem,
+                "我是装机顾问，一个按预算和用途出配置单的 Agent。\n\n"
+                "**能做的事**\n"
+                "- 出配置单：给预算 + 用途 + 分辨率，比如「8000 打游戏 2K 不要显示器」，"
+                "我会出 CPU / 显卡 / 主板 / 内存 / SSD / 电源整套，并做兼容性校验\n"
+                "- 讲理由：为什么这么配、哪块能省、以后怎么升级\n"
+                "- 对比配件：比如「RTX 5060 和 RX 9070 哪个好」\n"
+                "- 答疑：行情趋势、规格解释、兼容性问题\n\n"
+                "**关于价格**：具体型号和价格都来自硬件库，不是模型估的，"
+                "所以配置单可以拿去店里核对。库里的快照价我每次都会标注来源和时间。\n\n"
+                "**做不到的**：不带显示器外设的话我会说明；预算过低或条件冲突时，"
+                "我会直接告诉你没有可行配置，不会硬凑一套。\n\n"
+                "想配什么？说预算和用途就行。",
+                routing=routing, trace=[],
+            )
+
         # 把面板偏好明确写进给 LLM 的消息（否则 LLM 看不到面板选的预算/用途，会反问）
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": SYSTEM_PROMPT.replace("{tools}", self.registry.prompt_block())},
@@ -106,7 +127,15 @@ class AgentLoop:
         # 跨轮回灌：上一轮对话摘要（多轮追问「再便宜点/换个显卡」不丢上下文）
         if history:
             messages.append({"role": "user", "content": self._format_history(history)})
-        messages.append({"role": "user", "content": user_input + self._build_prefs_hint(mem.prefs)})
+        # 面板偏好只在真正要用到需求要素的问题上注入。
+        # 无条件注入会让槽位绑架意图：用户问「你能做什么」，
+        # 消息变成「你能做什么 + [预算100/游戏]」，模型就会当成新一轮推荐去答。
+        _prefs_hint = (
+            self._build_prefs_hint(mem.prefs)
+            if routing["type"] in ("recommend", "compare", "qa", "clarify")
+            else ""
+        )
+        messages.append({"role": "user", "content": user_input + _prefs_hint})
         trace: List[Dict[str, Any]] = []
         evidence_ids: List[str] = []
         check_retries = 0

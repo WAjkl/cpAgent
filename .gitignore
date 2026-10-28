@@ -26,3 +26,6 @@ _gpu_prices_raw.json
 data/*.backup-*.json
 data/*.log
 graphify-out/
+
+# 本地运行日志与临时验证脚本
+_run_logs/

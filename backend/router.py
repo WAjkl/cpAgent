@@ -10,6 +10,7 @@
     qa            —— 答疑（价格趋势、规格解释、兼容性问答等）
     clarify       —— 信息不足，需要追问
     greeting      —— 打招呼/闲聊
+    meta          —— 元问题：问的是「系统本身」（你是谁/你能做什么/怎么用）
     other         —— 其他
 """
 from __future__ import annotations
@@ -39,10 +40,29 @@ _RULES: Dict[str, list] = {
     ],
 }
 
+# 元问题：问的是「系统本身」（身份/能力/用法），不是配件也不是配置。
+# 必须用正则锚定整句意图，不能靠关键词打分——「什么」这个词会把
+# 「什么显卡好」误判成元问题，那是业务提问。
+_META_PATTERNS = [
+    r"你能(做|干|帮|提供)(些|点)?(什么|啥)",
+    r"你会(做|干)(些|点)?(什么|啥)",
+    r"你(有|支持)(些|哪)?(什么|哪些)(功能|能力|服务|本事)",
+    r"你(是|叫)(谁|什么)",
+    r"(怎么|如何)(使用|用)(你|这个|这套|系统)",
+    r"^\s*(帮助|help|使用说明|操作说明|功能列表|功能介绍)\s*$",
+    r"(介绍|说说)(一下)?(你|你自己|你的功能|你的能力)",
+    r"你(能|可以)(帮我)?(做)?(什么|啥)",
+]
+_META_RE = re.compile("|".join(_META_PATTERNS), re.IGNORECASE)
+
 
 def rule_classify(text: str) -> str:
     """规则预分类：返回类型（或 other）。"""
     t = text.lower().strip()
+    # 元问题优先判定：即使句子里带了「配置」「预算」等业务词，
+    # 只要是在问系统能力，就不该被带去走推荐流程。
+    if _META_RE.search(t):
+        return "meta"
     scores = {k: 0 for k in _RULES}
     for typ, kws in _RULES.items():
         for kw in kws:
@@ -76,6 +96,11 @@ def llm_classify(text: str, llm) -> str:
 def route(text: str, llm=None, llm_routing: bool = True) -> Dict[str, str]:
     """路由入口。返回 {type, method}；method=rule/llm/fallback。"""
     rule = rule_classify(text)
+    # 元问题不参与「规则 vs LLM」交叉。
+    # 原因：llm_classify 的分类枚举里没有 meta，它会把「你能做什么」判成 qa 或 other，
+    # 与规则冲突后落到 clarify（反问用户），于是用户问能力反而被反问一句。这里是硬规则。
+    if rule == "meta":
+        return {"type": "meta", "method": "rule"}
     if not llm_routing or llm is None:
         return {"type": rule, "method": "rule"}
     llm_t = llm_classify(text, llm)

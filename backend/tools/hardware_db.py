@@ -80,6 +80,30 @@ def query_hardware_db(
     results.sort(key=lambda it: _sort_key(it, use_case))
     results = results[:limit]
 
+    # 空结果必须自解释。
+    # 模型能看到的只有 count 和 results，如果 notice 不说明「为什么是 0 条」，
+    # 它会自己补一个原因——实测补成了「硬件库查询接口返回异常」，
+    # 用户会以为系统坏了，实际只是预算过滤后没命中。
+    # 语义必须由工具显式给出，不能让模型猜。
+    if results:
+        notice = (
+            "estimate 条目为快照估算价，装机前必须实时刷新；"
+            "所有价格均携带 price_source 与 fetched_at，禁止把 estimate 当实时价。"
+        )
+    else:
+        _cond = []
+        if budget_min is not None:
+            _cond.append("价格 >= %g 元" % budget_min)
+        if budget_max is not None:
+            _cond.append("价格 <= %g 元" % budget_max)
+        _cond_txt = "、".join(_cond) if _cond else "无价格区间限制"
+        notice = (
+            "查询已正常执行，但该条件下 0 条命中（类别 %s，%s）。"
+            "这是【过滤结果为空】：硬件库本身完好，不是接口异常、不是查询失败、不是数据缺失。"
+            "请如实告知用户「该预算/条件下没有符合的配件」，并给出可行建议（提高预算或放宽条件）；"
+            "严禁表述为『接口返回异常』『数据库查询失败』『数据缺失』。"
+        ) % (category, _cond_txt)
+
     return {
         "query": {
             "category": category,
@@ -90,10 +114,7 @@ def query_hardware_db(
         },
         "count": len(results),
         "results": results,
-        "notice": (
-            "estimate 条目为快照估算价，装机前必须实时刷新；"
-            "所有价格均携带 price_source 与 fetched_at，禁止把 estimate 当实时价。"
-        ),
+        "notice": notice,
     }
 
 
